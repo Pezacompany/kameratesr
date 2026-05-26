@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>VehicleScan</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+html, body {
+  width:100%; height:100%;
+  overflow:hidden;
+  background:#000;
+  font-family:'Share Tech Mono', monospace;
+  touch-action:none;
+}
+
+/* ── FULLSCREEN VIDEO ── */
+#video {
+  position:fixed;
+  inset:0;
+  width:100%; height:100%;
+  object-fit:cover;
+  display:block;
+  z-index:1;
+}
+
+#canvas {
+  position:fixed;
+  inset:0;
+  width:100%; height:100%;
+  z-index:2;
+  pointer-events:none;
+}
+
+/* ── TOP BAR ── */
+.top-bar {
+  position:fixed;
+  top:0; left:0; right:0;
+  z-index:10;
+  padding: env(safe-area-inset-top, 12px) 16px 12px;
+  padding-top: max(env(safe-area-inset-top), 12px);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  background:linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+}
+
+.app-title {
+  font-size:16px;
+  letter-spacing:4px;
+  color:#fff;
+  text-transform:uppercase;
+}
+.app-title span { color:#00e5ff; }
+
+.top-right {
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.pill {
+  display:flex;
+  align-items:center;
+  gap:5px;
+  background:rgba(0,0,0,0.45);
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:20px;
+  padding:4px 10px;
+  font-size:10px;
+  letter-spacing:1px;
+  color:rgba(255,255,255,0.5);
+}
+
+.dot {
+  width:6px; height:6px;
+  border-radius:50%;
+  background:#333;
+  flex-shrink:0;
+}
+.dot.green  { background:#76ff03; box-shadow:0 0 6px #76ff03; animation:blink 1.4s infinite; }
+.dot.cyan   { background:#00e5ff; box-shadow:0 0 6px #00e5ff; }
+.dot.orange { background:#ffb300; box-shadow:0 0 6px #ffb300; animation:blink 0.8s infinite; }
+.dot.red    { background:#f44; }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+/* ── SCAN LINE ── */
+#scanLine {
+  position:fixed;
+  left:0; right:0;
+  height:1px;
+  background:linear-gradient(90deg, transparent 0%, #00e5ff 40%, #fff 50%, #00e5ff 60%, transparent 100%);
+  z-index:5;
+  pointer-events:none;
+  display:none;
+  animation:scanAnim 2.5s linear infinite;
+}
+@keyframes scanAnim {
+  0%   { top:0%;   opacity:0; }
+  3%   { opacity:0.7; }
+  97%  { opacity:0.7; }
+  100% { top:100%; opacity:0; }
+}
+
+/* ── BOTTOM PANEL ── */
+.bottom-panel {
+  position:fixed;
+  bottom:0; left:0; right:0;
+  z-index:10;
+  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+  background:linear-gradient(to top, rgba(0,0,0,0.82) 0%, transparent 100%);
+  padding-top:32px;
+}
+
+/* Stats row */
+.stats-row {
+  display:flex;
+  justify-content:space-around;
+  padding:0 16px 12px;
+}
+
+.stat {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:2px;
+}
+
+.stat-num {
+  font-size:28px;
+  font-weight:bold;
+  line-height:1;
+  letter-spacing:2px;
+}
+.stat-num.cyan   { color:#00e5ff; text-shadow:0 0 12px rgba(0,229,255,0.6); }
+.stat-num.red    { color:#ff3d00; text-shadow:0 0 12px rgba(255,61,0,0.6); }
+.stat-num.green  { color:#76ff03; text-shadow:0 0 12px rgba(118,255,3,0.6); }
+.stat-num.white  { color:#fff; }
+
+.stat-label {
+  font-size:9px;
+  letter-spacing:2px;
+  color:rgba(255,255,255,0.4);
+  text-transform:uppercase;
+}
+
+.stat-divider {
+  width:1px;
+  background:rgba(255,255,255,0.1);
+  margin:4px 0;
+}
+
+/* Detection chips */
+.chips {
+  display:flex;
+  gap:8px;
+  padding:0 16px 16px;
+  overflow-x:auto;
+  scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+  min-height:44px;
+  align-items:center;
+}
+.chips::-webkit-scrollbar { display:none; }
+
+.chip {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 12px;
+  border-radius:20px;
+  border:1px solid;
+  white-space:nowrap;
+  font-size:11px;
+  letter-spacing:1px;
+  animation:chipIn 0.2s ease;
+  flex-shrink:0;
+}
+@keyframes chipIn {
+  from { opacity:0; transform:translateY(6px) scale(0.9); }
+  to   { opacity:1; transform:translateY(0)   scale(1); }
+}
+
+.chip.vehicle { border-color:rgba(0,229,255,0.5); background:rgba(0,229,255,0.12); color:#00e5ff; }
+.chip.person  { border-color:rgba(255,61,0,0.5);  background:rgba(255,61,0,0.12);  color:#ff6e40; }
+.chip.other   { border-color:rgba(118,255,3,0.4); background:rgba(118,255,3,0.1);  color:#76ff03; }
+
+.chip-dot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+.chip-conf { opacity:0.6; font-size:10px; }
+
+.no-chips {
+  font-size:11px;
+  letter-spacing:2px;
+  color:rgba(255,255,255,0.2);
+  padding-left:2px;
+}
+
+/* ── START SCREEN ── */
+#startScreen {
+  position:fixed;
+  inset:0;
+  z-index:20;
+  background:rgba(0,0,0,0.92);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:28px;
+  padding:32px;
+}
+
+.start-logo {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+}
+
+.start-icon {
+  width:72px; height:72px;
+  border:2px solid rgba(0,229,255,0.5);
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+}
+.start-icon::before {
+  content:'';
+  position:absolute;
+  inset:6px;
+  border:1px solid rgba(0,229,255,0.2);
+  border-radius:50%;
+}
+.start-icon svg { width:30px; height:30px; fill:#00e5ff; }
+
+.start-title {
+  font-size:22px;
+  letter-spacing:6px;
+  color:#fff;
+  text-transform:uppercase;
+}
+.start-title span { color:#00e5ff; }
+
+.start-sub {
+  font-size:11px;
+  letter-spacing:2px;
+  color:rgba(255,255,255,0.35);
+  text-align:center;
+  line-height:1.8;
+}
+
+#loadStatus {
+  font-size:11px;
+  letter-spacing:2px;
+  color:rgba(0,229,255,0.6);
+  min-height:18px;
+  text-align:center;
+}
+
+.start-btn {
+  width:100%;
+  max-width:280px;
+  padding:16px;
+  background:transparent;
+  border:1px solid rgba(0,229,255,0.6);
+  border-radius:4px;
+  color:#00e5ff;
+  font-family:'Share Tech Mono', monospace;
+  font-size:13px;
+  letter-spacing:4px;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all 0.2s;
+  position:relative;
+  overflow:hidden;
+}
+.start-btn::before {
+  content:'';
+  position:absolute;
+  inset:0;
+  background:#00e5ff;
+  opacity:0;
+  transition:opacity 0.2s;
+}
+.start-btn:active::before { opacity:0.15; }
+.start-btn:disabled { opacity:0.3; cursor:not-allowed; }
+.start-btn span { position:relative; }
+
+/* ── ERROR TOAST ── */
+#errorToast {
+  position:fixed;
+  top: max(env(safe-area-inset-top), 70px);
+  left:16px; right:16px;
+  z-index:30;
+  background:rgba(244,67,54,0.95);
+  border-radius:8px;
+  padding:14px 16px;
+  font-size:12px;
+  letter-spacing:1px;
+  color:#fff;
+  display:none;
+  animation:toastIn 0.3s ease;
+  line-height:1.6;
+}
+@keyframes toastIn {
+  from { opacity:0; transform:translateY(-10px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+
+/* ── CORNER RETICLE (center of screen) ── */
+.reticle {
+  position:fixed;
+  top:50%; left:50%;
+  transform:translate(-50%, -50%);
+  width:160px; height:100px;
+  z-index:4;
+  pointer-events:none;
+  opacity:0.4;
+}
+.reticle::before, .reticle::after,
+.reticle span::before, .reticle span::after {
+  content:'';
+  position:absolute;
+  width:18px; height:18px;
+  border-color:rgba(0,229,255,0.8);
+  border-style:solid;
+}
+.reticle::before    { top:0;    left:0;  border-width:2px 0 0 2px; }
+.reticle::after     { top:0;    right:0; border-width:2px 2px 0 0; }
+.reticle span::before { bottom:0; left:0;  border-width:0 0 2px 2px; }
+.reticle span::after  { bottom:0; right:0; border-width:0 2px 2px 0; }
+
+/* ── FPS badge ── */
+#fpsBadge {
+  position:fixed;
+  top: max(env(safe-area-inset-top), 12px);
+  left:50%;
+  transform:translateX(-50%);
+  top:calc(max(env(safe-area-inset-top), 12px) + 50px);
+  z-index:10;
+  background:rgba(0,0,0,0.4);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:12px;
+  padding:3px 10px;
+  font-size:10px;
+  letter-spacing:2px;
+  color:rgba(255,255,255,0.3);
+  display:none;
+}
+</style>
+</head>
+<body>
+
+<!-- VIDEO + CANVAS -->
+<video id="video" autoplay muted playsinline webkit-playsinline></video>
+<canvas id="canvas"></canvas>
+
+<!-- SCAN LINE -->
+<div id="scanLine"></div>
+
+<!-- RETICLE -->
+<div class="reticle"><span></span></div>
+
+<!-- FPS -->
+<div id="fpsBadge">-- FPS</div>
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <div class="app-title">VEHICLE<span>SCAN</span></div>
+  <div class="top-right">
+    <div class="pill"><div class="dot" id="camDot"></div>CAM</div>
+    <div class="pill"><div class="dot" id="aiDot"></div>AI</div>
+  </div>
+</div>
+
+<!-- BOTTOM PANEL -->
+<div class="bottom-panel">
+  <div class="stats-row">
+    <div class="stat">
+      <div class="stat-num cyan"  id="numVehicles">0</div>
+      <div class="stat-label">Pojazdy</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-num red"   id="numPersons">0</div>
+      <div class="stat-label">Osoby</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-num green" id="numOther">0</div>
+      <div class="stat-label">Inne</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-num white" id="numTotal">0</div>
+      <div class="stat-label">Łącznie</div>
+    </div>
+  </div>
+  <div class="chips" id="chips">
+    <div class="no-chips" id="noChips">OCZEKIWANIE...</div>
+  </div>
+</div>
+
+<!-- ERROR TOAST -->
+<div id="errorToast"></div>
+
+<!-- START SCREEN -->
+<div id="startScreen">
+  <div class="start-logo">
+    <div class="start-icon">
+      <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+    </div>
+    <div class="start-title">VEHICLE<span>SCAN</span></div>
+  </div>
+  <div class="start-sub">
+    Wykrywanie pojazdów w czasie rzeczywistym<br>
+    przy użyciu kamery i modelu AI
+  </div>
+  <div id="loadStatus">ŁADOWANIE MODELU AI...</div>
+  <button class="start-btn" id="startBtn" onclick="startCamera()" disabled>
+    <span>▶ &nbsp;URUCHOM KAMERĘ</span>
+  </button>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────
+const VEHICLES = new Set(['car','truck','bus','motorcycle','bicycle','airplane','boat','train']);
+
+const COLORS = {
+  vehicle: { stroke:'#00e5ff', fill:'rgba(0,229,255,0.08)', label:'rgba(0,229,255,0.9)' },
+  person:  { stroke:'#ff3d00', fill:'rgba(255,61,0,0.08)',  label:'rgba(255,61,0,0.9)' },
+  other:   { stroke:'#76ff03', fill:'rgba(118,255,3,0.06)', label:'rgba(118,255,3,0.85)' },
+};
+
+// ── ELEMENTS ──────────────────────────────────────────────────────────────
+const video   = document.getElementById('video');
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d');
+
+// ── STATE ─────────────────────────────────────────────────────────────────
+let model      = null;
+let stream     = null;
+let running    = false;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let currentFps = 0;
+
+// ── HELPERS ───────────────────────────────────────────────────────────────
+function getType(cls) {
+  if (cls === 'person') return 'person';
+  if (VEHICLES.has(cls)) return 'vehicle';
+  return 'other';
+}
+
+function showError(msg) {
+  const t = document.getElementById('errorToast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.display = 'none'; }, 5000);
+}
+
+// ── LOAD MODEL ────────────────────────────────────────────────────────────
+(async () => {
+  const dot = document.getElementById('aiDot');
+  dot.className = 'dot orange';
+  try {
+    model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+    dot.className = 'dot green';
+    document.getElementById('loadStatus').textContent = 'MODEL GOTOWY ✓';
+    document.getElementById('startBtn').disabled = false;
+  } catch(e) {
+    dot.className = 'dot red';
+    document.getElementById('loadStatus').textContent = 'BŁĄD ŁADOWANIA MODELU';
+    showError('Nie udało się załadować modelu AI. Sprawdź połączenie.');
+  }
+})();
+
+// ── START CAMERA ──────────────────────────────────────────────────────────
+async function startCamera() {
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  document.getElementById('loadStatus').textContent = 'INICJALIZACJA KAMERY...';
+
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+
+  const tries = [
+    { video:{ facingMode:{ exact:'environment' }, width:{ideal:1280}, height:{ideal:720} }, audio:false },
+    { video:{ facingMode:'environment' }, audio:false },
+    { video:{ width:{ideal:640}, height:{ideal:480} }, audio:false },
+    { video:true, audio:false },
+  ];
+
+  for (const c of tries) {
+    try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+    catch(e) { stream = null; }
+  }
+
+  if (!stream) {
+    document.getElementById('loadStatus').textContent = 'BRAK DOSTĘPU DO KAMERY';
+    btn.disabled = false;
+    showError('Brak dostępu do kamery. Wymagane HTTPS lub localhost. Zezwól na kamerę w ustawieniach przeglądarki.');
+    return;
+  }
+
+  video.srcObject = stream;
+  video.muted = true;
+  video.setAttribute('playsinline','');
+
+  await new Promise(res => {
+    if (video.readyState >= 1) { res(); return; }
+    video.addEventListener('loadedmetadata', res, { once:true });
+  });
+
+  try { await video.play(); } catch(_) {}
+
+  // Sync canvas to video
+  function syncCanvas() {
+    canvas.width  = video.videoWidth  || window.innerWidth;
+    canvas.height = video.videoHeight || window.innerHeight;
+  }
+  syncCanvas();
+  video.addEventListener('loadedmetadata', syncCanvas);
+  window.addEventListener('resize', syncCanvas);
+
+  // Update dots
+  document.getElementById('camDot').className = 'dot green';
+
+  // Hide start screen
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('scanLine').style.display = 'block';
+  document.getElementById('fpsBadge').style.display = 'block';
+
+  running = true;
+  requestAnimationFrame(detect);
+}
+
+// ── DETECTION LOOP ────────────────────────────────────────────────────────
+async function detect() {
+  if (!running) return;
+
+  frameCount++;
+
+  // FPS
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    currentFps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+    frameCount = 0;
+    lastFpsTime = now;
+    document.getElementById('fpsBadge').textContent = currentFps + ' FPS';
+  }
+
+  // Detect every 2nd frame
+  if (frameCount % 2 === 0 && model && video.readyState >= 2) {
+    try {
+      const preds = await model.detect(video);
+      drawBoxes(preds);
+      updateUI(preds);
+    } catch(_) {}
+  }
+
+  requestAnimationFrame(detect);
+}
+
+// ── DRAW ──────────────────────────────────────────────────────────────────
+function drawBoxes(preds) {
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Scale from video intrinsic → canvas display
+  const scaleX = W / (video.videoWidth  || W);
+  const scaleY = H / (video.videoHeight || H);
+
+  preds.forEach(p => {
+    let [x, y, w, h] = p.bbox;
+    x *= scaleX; w *= scaleX;
+    y *= scaleY; h *= scaleY;
+
+    const type = getType(p.class);
+    const c    = COLORS[type];
+    const pct  = Math.round(p.score * 100);
+
+    // Filled box
+    ctx.fillStyle = c.fill;
+    ctx.fillRect(x, y, w, h);
+
+    // Border
+    ctx.strokeStyle = c.stroke;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    // Corner marks
+    const cl = Math.min(16, w * 0.25, h * 0.25);
+    ctx.strokeStyle = c.stroke;
+    ctx.lineWidth = 3;
+    [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([cx,cy,dx,dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + dx*cl, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + dy*cl);
+      ctx.stroke();
+    });
+
+    // Label
+    const txt = `${p.class.toUpperCase()}  ${pct}%`;
+    ctx.font = `bold ${Math.max(10, Math.min(13, W/40))}px "Share Tech Mono", monospace`;
+    const tw = ctx.measureText(txt).width;
+    const lh = 18;
+    const lx = Math.max(0, Math.min(x, W - tw - 12));
+    const ly = y > lh + 2 ? y - lh - 2 : y + h + 2;
+
+    ctx.fillStyle = c.label;
+    ctx.fillRect(lx, ly, tw + 12, lh);
+    ctx.fillStyle = '#000';
+    ctx.fillText(txt, lx + 6, ly + 13);
+  });
+}
+
+// ── UI UPDATE ─────────────────────────────────────────────────────────────
+function updateUI(preds) {
+  const vehicles = preds.filter(p => getType(p.class) === 'vehicle');
+  const persons  = preds.filter(p => getType(p.class) === 'person');
+  const others   = preds.filter(p => getType(p.class) === 'other');
+
+  document.getElementById('numVehicles').textContent = vehicles.length;
+  document.getElementById('numPersons').textContent  = persons.length;
+  document.getElementById('numOther').textContent    = others.length;
+  document.getElementById('numTotal').textContent    = preds.length;
+
+  const chips   = document.getElementById('chips');
+  const noChips = document.getElementById('noChips');
+
+  // Remove old chips
+  chips.querySelectorAll('.chip').forEach(el => el.remove());
+
+  if (!preds.length) {
+    noChips.style.display = 'block';
+    return;
+  }
+  noChips.style.display = 'none';
+
+  const sorted = [...preds].sort((a,b) => b.score - a.score);
+  sorted.forEach(p => {
+    const type = getType(p.class);
+    const pct  = Math.round(p.score * 100);
+    const chip = document.createElement('div');
+    chip.className = `chip ${type}`;
+    chip.innerHTML = `<div class="chip-dot"></div>${p.class}<span class="chip-conf">${pct}%</span>`;
+    chips.appendChild(chip);
+  });
+}
+</script>
+</body>
+</html>
+
